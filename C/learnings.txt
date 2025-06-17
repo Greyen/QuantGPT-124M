@@ -1,0 +1,33 @@
+1 - size_t is an unsigned integer type in C that is used to represent the size of objects in memory.
+  - It is the result type of sizeof operator.
+  - ex 
+    int array[10];
+    size_t size = sizeof(array);
+2 - typedef struct Embedding {
+        int rows;
+        int col;
+        float* data;
+    } Embedding;
+
+    You create a structure named Embedding (tag name).
+
+    You also make a shortcut using typedef so you can write:Embedding e;
+
+    I can use both struct Embedding e1; // works , Embedding e2 //works; 
+
+  - typedef struct {
+        int rows;
+        int col;
+        float* data;
+    } Embedding;
+    
+    What this does:
+
+    You create a structure with no name (anonymous struct).
+
+    But typedef gives it a shortcut name Embedding.
+
+    Embedding e;          // works ✅  , struct ??? e;         // ❌ doesn't work (no struct name)
+3 - 
+
+
