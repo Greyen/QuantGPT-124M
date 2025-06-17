@@ -28,6 +28,28 @@
     But typedef gives it a shortcut name Embedding.
 
     Embedding e;          // works ✅  , struct ??? e;         // ❌ doesn't work (no struct name)
-3 - 
+3 - ✅ 2. How to printf Multiple Data Types
+    Here's how you deal with various data types in printf:
 
+    Data Type	Format Specifier
+    int	%d
+    float	%f
+    double	%lf
+    char	%c
+    char* (string)	%s
+    long	%ld
+    unsigned int	%u
+    void* (pointer)	%p
+     
+    ex-     printf("Name: %s, Age: %d, Height: %.2f, Grade: %c\n", name, age, height, grade);
+ 4-  In C, arrays and pointers are passed by reference by default.
+ 5 -  arr[i]  ≡  *(arr + i)
+   - to get the first element we should do *arr arr is the pointer to the first element of array
+   - int nums[5] = {10, 20, 30, 40, 50};
+    int *arr = &nums[0];  // or just: int *arr = nums;
+    nums[0] is the first element.
 
+    &nums[0] is the address of that element.
+
+    So int *arr = &nums[0]; is saying:
+    “let arr point to the first element of nums.”
