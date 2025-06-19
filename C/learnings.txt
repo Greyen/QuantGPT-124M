@@ -53,3 +53,5 @@
 
     So int *arr = &nums[0]; is saying:
     “let arr point to the first element of nums.”
+
+6 - i have pointer to a pointer so it is  necessary that i pointer dataype shpould match with second pointer

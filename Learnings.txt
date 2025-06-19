@@ -1,3 +1,4 @@
 TO DO 
 - Why need to do the projections of q,k,v in attention head
 - have to look what is Xavier normal init and how it is different form normal init
+-  Do we also add weights in the normalization
