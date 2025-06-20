@@ -20,34 +20,41 @@ typedef struct
 
 typedef struct Normalized{
     float* mean;
+    float* grad_mean;
     float* std;
+    float* grad_std;
 }Normalized;
 
 typedef struct MultiHead
 {
     float* QKT;
-    float* headOutput; 
+    float* grad_QKT;
+    float* headOutput;
+    float* grad_headOutput; 
 }MultiHead;
 
-
-
-
 typedef struct Linear{
-    int input_features;
-    int output_features;
+    // int input_features;
+    // int output_features;
     float* data; 
+    float* grad_data;
 }Linear;
 
 typedef struct Bias{
     float* data;
+    float* grad_data;
 }Bias;
 
+
+// have to look at where dropout works
 typedef struct Dropout{
     float* data;
+    float* grad_data;
 }Dropout;
 
 typedef struct GELU{
     float* data;
+    float* grad_data;
 }GELU;
 
 typedef struct FFN{
@@ -61,26 +68,37 @@ typedef struct FFN{
 
 typedef struct Head{
     float* q_proj;
+    float* grad_q_proj;
     float* v_proj;
+    float* grad_v_proj;
     float* k_proj;
+    float* grad_k_proj;
     float* q;
+    float* grad_q;
     float* k;
+    float* grad_k;
     float* v;
+    float* grad_v;
     float* qk;
+    float* grad_qk;
     float* Attn_out;
+    float* grad_Attn_out;
     float* sc_Attn_out;
+    float* grad_sc_Attn_out;
     float* softmax_out;
+    float* grad_softmax_out;
 }Head;
 
-typedef struct HeadBlock{
-    Head* data;
-}HeadBlock;
+// typedef struct HeadBlock{
+//     Head* data;
+// }HeadBlock;
 typedef struct CasualAttention{
     Head** hblock;
 
 }CasualAttention;
 typedef struct DecoderBlock
 {
+    params** param;
     Normalized* nor1;
     CasualAttention* attn;
     Normalized* nor2;
@@ -92,14 +110,17 @@ typedef struct Embedding{
     // int rows;
     // int col;
     float* data;
+    float* grad_data;
 }Embedding;
 
 typedef struct Positional{
     float* data;
+    float* grad_data;
 }Positional;
 
 typedef struct DecoderBlocks{
   DecoderBlock* data;
+  DecoderBlock* gradata;
 }DecoderBlocks;
 
 typedef struct {
@@ -112,18 +133,31 @@ typedef struct {
 }GPT2;
 typedef struct params{
     float* em_out;// can be put into with embedding will try once all done
+    float* grad_em_out;
     float* lNorm1_out;
+    float* grad_lNorm1_out;
     float* lNorm2_out;
+    float* grad_lNorm2_out;
     float* MHA_out;
+    float* grad_MHA_out;
     float* FFN1_out; // b,t,4c
+    float* grad_FFN1_out;
     float* gelu1_out;
+    float* grad_gelu1_out;
     float* FFN2_out; // b,t,c
+    float* grad_FFN2_out; 
     float* gelu2_out; // b,
+    float* grad_gelu2_out;
     float* drop_out;
-    float* res;
+    float* grad_drop_out;
+    float* res; // single decoder block output 
+    float* grad_res;
     float* fNormres; // after final decoder
+    float* grad_fNormres;
     float* final_res;
+    float* grad_final_res;
     float* fi_softmax;
+    float* grad_fi_softmax;
 }params;
 
 typedef struct GlobalParam{
@@ -312,6 +346,14 @@ float gelu(float x) {
     return x * sigmoid(1.702f * x);  // Fast GELU approximation
 }
 
+float d_gelu(float x) {
+    float z = 1.702f * x;
+    float s = sigmoid(z);
+    return s + x * s * (1.0f - s) * 1.702f;
+}
+
+// have to correct the bias as it should be brodcast have to look into it
+
 void FFNmatmul1(float* input , float* weight , float* output,float* bias,GPTconfig config){
     for(int i=0;i<config.batch_size*config.seq_length;i++){
         for(int j=0;j<4*config.embedding_dims;j++){
@@ -362,13 +404,122 @@ void* finalMap(float* input ,float* output , GPTconfig config){
         output[i] = input[i];
     }
 }
+
+void* Gelubackward(params* param ,GPTconfig config  ,float* back , float* local ,  float* grad_out){
+    for(int i=0;i<config.batch_size*config.seq_length*config.embedding_dims;i++){
+        param->grad_FFN2_out[i] = d_gelu(param->gelu2_out[i])*grad_out[i];
+    }
+    
+}
+
+void* FFNmatmul2backward(GPTconfig config , params* param , Linear* linear ,  float* grad_out){
+
+  // orgiginal gelu1_out (B,T,4C)
+  // gelu1_out.Traspose (B,4C,T) (matmul) grad_FFN2_out(B,T,C)
+  // result or say linear->grad_data should be of shape 4C,C
+
+  // this gradent will not flow backwards beacuse it doesn't have any children 
+  int B = config.batch_size; // 2
+  int C = config.embedding_dims; // 1
+  int T = config.seq_length; // 2
+  for(int b=0;b<B;b++){  // batches 
+    for(int k=0;k<4*C;k++){ // give result for all tokens or say seq_length // which will give one batch result
+        for(int i=0;i<C;i++){ // it will give result of token of a seq 
+            for(int j=0;j<T;j++){
+                // explain it later 
+                linear->grad_data[k*C+i] += param->gelu1_out[b*T*4*C + j*4*C + k]*grad_out[j*C + b*C*T + i];
+            }
+        }
+    }
+  }
+
+
+    //   param->grad_gelu1_out here it flow backward it will be of B,T,4C 
+    //   linear->data from here it will flow i.e grad output (4C,C) -> iska transpose (C,4C)
+    //   param->grad_FFN2_out (B,T,C)
+    // grad_gelu1_out  = param->grad_FFN2_out(B,T,C)(matmul) (linear->data).transpose(C,4C) ..overall-> B,T,4C
+
+  for(int b=0;b<B;b++){  // batches 
+    for(int k=0;k<T;k++){ // give result for all tokens or say seq_length // which will give one batch result
+        for(int i=0;i<4*C;i++){ // it will give result of token of a seq 
+            for(int l=0;l<C;l++){
+                // explain it later 
+                param->grad_gelu1_out[b*4*C*T + k*4*C+i] = param->grad_FFN2_out[b*T*C +l+ k*C]*linear->data[i*C + l];
+            }
+        }
+    }
+  }
+
+}
+
+// Have to change the dimensions 
+void* FFNmatmul1backward(GPTconfig config , params* param , Linear* linear ,  float* grad_out){
+
+   // weights dimension here (C,4C)
+  // original MHA_out  (B,T,C) // gradients will flow back here 
+  // MHA_out.Traspose (B,C,T) (matmul) grad_FFN1_out(B,T,4C)
+
+  // result or say linear->grad_data should be of shape C,4C
+
+  // this gradent will not flow backwards beacuse it doesn't have any children 
+  int B = config.batch_size; // 2
+  int C = config.embedding_dims; // 1
+  int T = config.seq_length; // 2
+
+  for(int b=0;b<B;b++){  // batches 
+    for(int k=0;k<4*C;k++){ // give result for all tokens or say seq_length // which will give one batch result
+        for(int i=0;i<C;i++){ // it will give result of token of a seq 
+            for(int j=0;j<T;j++){
+                // explain it later 
+                linear->grad_data[k*C+i] += param->MHA_out[b*T*4*C + j*4*C + k]*grad_out[j*C + b*C*T + i];
+            }
+        }
+    }
+  }
+
+
+    //   param->grad_gelu1_out here it flow backward it will be of B,T,4C 
+    //   linear->data from here it will flow i.e grad output (4C,C) -> iska transpose (C,4C)
+    //   param->grad_FFN2_out (B,T,C)
+    // grad_gelu1_out  = param->grad_FFN2_out(B,T,C)(matmul) (linear->data).transpose(C,4C) ..overall-> B,T,4C
+
+  for(int b=0;b<B;b++){  // batches 
+    for(int k=0;k<T;k++){ // give result for all tokens or say seq_length // which will give one batch result
+        for(int i=0;i<4*C;i++){ // it will give result of token of a seq 
+            for(int l=0;l<C;l++){
+                // explain it later 
+                param->grad_MHA_out[b*4*C*T + k*4*C+i] = param->grad_FFN1_out[b*T*C +l+ k*C]*linear->data[i*C + l];
+            }
+        }
+    }
+  }
+
+}
+
+void* FFNbackward(GPTconfig config , params* param ,DecoderBlock* block){
+    //Gleu2 backword
+    Gelubackward(param ,config ,param->grad_gelu2_out);
+
+    // FFN 2 linear layer backword
+    FFNmatmul2backward(config,param,block->ffn->lin_2,param->grad_FFN2_out);
+
+    //Gleu1 backword
+    Gelubackward(param ,config,param->grad_FFN1_out ,param->gelu1_out, param->grad_gelu1_out );
+
+    // FFN 1 linear layer backword *IMP* have to check these dimensions
+    FFNmatmul1backward(config,param,block->ffn->lin_1 ,param->grad_FFN1_out);
+}
+
 void* FFNforward(float* input ,float* output,GPTconfig config,DecoderBlock* block,params* param){
     FFNmatmul1(input , block->ffn->lin_1->data,param->FFN1_out,block->ffn->b1->data,config);
     Gelu(param->FFN1_out , param->gelu1_out,config);
     FFNmatmul2(param->gelu1_out , block->ffn->lin_2->data,param->FFN2_out,block->ffn->b2->data,config);
     Gelu(param->FFN2_out ,param->gelu2_out,config);
     finalMap(param->gelu2_out , param->res,config);
+}
 
+void* MHAbackward(GPTconfig config , GPT2* gpt2,DecoderBlock* block){
+    
 }
 
 float CrossEntropyloss(float* pred , int* true ,GPTconfig config){
@@ -379,6 +530,16 @@ float CrossEntropyloss(float* pred , int* true ,GPTconfig config){
         loss+= -logf(pred[i*config.vocab_size+true[i]]);  
     }
     return loss/(config.batch_size*config.seq_length);
+}
+void* DecoderBackward(GPTconfig config , GPT2* gpt2 ,params* param,DecoderBlock* block, int num){
+
+    // FFN
+    FFNbackward(param->lNorm2_out,param->res,config,block,param);
+
+    // MHA 
+    MHAbackward(config ,gpt2, block)
+   
+
 }
 void* Decoderforward(GPTconfig config , GPT2* gpt2 ,params* param,DecoderBlock* block, int num){
     if(num==0){
@@ -396,6 +557,26 @@ void* Decoderforward(GPTconfig config , GPT2* gpt2 ,params* param,DecoderBlock* 
 
     // FFN
     FFNforward(param->lNorm2_out,param->res,config,block,param);
+}
+
+// BackPropagation
+void* backward(GPTconfig config ,GPT2* gpt2, params* param , int* true ){
+    //LOSS 
+    for(int i=0;i<config.batch_size*config.seq_length;i++){
+        param->grad_fi_softmax[i*config.vocab_size + true[i]] = -1/param->fi_softmax[i*config.vocab_size + true[i]];
+    }
+
+
+    // normalized backward
+
+    // Decoder backward
+    for(int i=config.layers-1;i>=0;i--){
+        DecoderBackward(config,gpt2,param,gpt2->blocks[i], i);
+    }
+
+
+    
+    
 }
 
 void* forward(GPTconfig config , GPT2* gpt2 , Tensor* input,params* param){
@@ -440,6 +621,9 @@ void* forward(GPTconfig config , GPT2* gpt2 , Tensor* input,params* param){
     // final layer norm
     finalLayerNorm(param->res,config,param->fNormres,gpt2->fLayerNorm);
 
+    // final linear mapping embedding to vocab size
+    finalMatmul(param->fNormres, gpt2->flin->data , param->final_res,config);
+
     //final softmax
     Softmax(param->final_res , param->fi_softmax,config);
 
@@ -465,9 +649,8 @@ void xavier_normal_init(float *tensor, int fan_in, int fan_out, int flag, float 
     }
 }
 
-void gpt2_init(GPTconfig config){
+void gpt2_init(GPTconfig config , GPT2* gpt2){
     float init_scale = 0.02f; 
-    GPT2* gpt2 =  (GPT2*)malloc(sizeof(GPT2));
     params* param = (params*)malloc(sizeof(params));
     params** par_block = (params**)malloc(config.layers*sizeof(params*));
     gpt2->emb = (Embedding*)malloc(sizeof(Embedding));
@@ -563,7 +746,7 @@ void gpt2_init(GPTconfig config){
     //Final Linear Layer 
     gpt2->flin = (Linear*)malloc(sizeof(Linear));
     gpt2->flin->data = (float*)malloc(config.embedding_dims*config.vocab_size*sizeof(float));
-    finalMatmul(param->fNormres, gpt2->flin->data , param->final_res,config);
+    
 
 }
 
@@ -579,7 +762,9 @@ int main(){
         .head_size = config.embedding_dims/config.n_head
     };
 
-
+    // Have to look what the fuck is this ---------------------------------------------------------------------------
+    
+    
     // Embedding* lookup_table  = (Embedding*)malloc(sizeof(Embedding));
     // lookup_table->rows = config.vocab_size;
     // lookup_table->col =  config.embedding_dims;
@@ -596,18 +781,20 @@ int main(){
 
 
 
-    GPT2* gpt2 =  (GPT2*)malloc(sizeof(GPT2));
-    // should put here pointers or defernce them to get the object right now going with the pointers
-    // gpt2->emb = *lookup_table;
-    // gpt2->pos_matrix = *pos_enco;
+    // Have to look what the fuck is this ------------------------------------------------------
+
+    // GPT2* gpt2 =  (GPT2*)malloc(sizeof(GPT2));
+    // // should put here pointers or defernce them to get the object right now going with the pointers
+    // // gpt2->emb = *lookup_table;
+    // // gpt2->pos_matrix = *pos_enco;
     params* param = (params*)malloc(sizeof(params));
-    gpt2->emb = (Embedding*)malloc(sizeof(Embedding));
-    gpt2->pos = (Positional*)malloc(sizeof(Positional));
-    gpt2->emb->data = malloc(config.vocab_size * config.embedding_dims * sizeof(float));
-    gpt2->pos->data = malloc(config.vocab_size * config.embedding_dims * sizeof(float));
-    float init_scale = 0.02f;  // Reduced initial scale
-    xavier_normal_init(gpt2->emb->data, config.vocab_size, config.embedding_dims, 0, init_scale);
-    xavier_normal_init(gpt2->pos->data, config.seq_length, config.embedding_dims, 0, init_scale);
+    // gpt2->emb = (Embedding*)malloc(sizeof(Embedding));
+    // gpt2->pos = (Positional*)malloc(sizeof(Positional));
+    // gpt2->emb->data = malloc(config.vocab_size * config.embedding_dims * sizeof(float));
+    // gpt2->pos->data = malloc(config.vocab_size * config.embedding_dims * sizeof(float));
+    // float init_scale = 0.02f;  // Reduced initial scale
+    // xavier_normal_init(gpt2->emb->data, config.vocab_size, config.embedding_dims, 0, init_scale);
+    // xavier_normal_init(gpt2->pos->data, config.seq_length, config.embedding_dims, 0, init_scale);
   
 
     // have to intialize with normal distribution
@@ -625,6 +812,8 @@ int main(){
     //     dim->data[i]=32.5f;
     //     printf("number: "%f\n",dim->data[i]);
     // }
+
+    // --------------------------------------------------------------------------------------------------------------------
     int count=0;
     Tensor* sin_Tensor = (Tensor*)malloc(sizeof(Tensor));
     for(int i=0;i<2;i++){
@@ -633,13 +822,20 @@ int main(){
         }
     }
 
+
+    GPT2* gpt2 =  (GPT2*)malloc(sizeof(GPT2));
+
     // gpt inti
-    gpt2_init(config);
+    gpt2_init(config,gpt2);
 
     // training iteration
-    // batch's size 
+
+
+    // batch's size // have to make data loader in c
+
+
     // forward
-    forward(config,gpt2,sin_Tensor,param);
+    forward(config,gpt2,sin_Tensor,param); // have to look at this param thing 
 
     float loss = CrossEntropyloss(param->final_res,);
 
@@ -647,7 +843,7 @@ int main(){
     
     // loss.backward()
 
-    backward();
+    backward(config);
   
 }
 
